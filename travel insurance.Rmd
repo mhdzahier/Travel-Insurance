@@ -1,0 +1,450 @@
+---
+title: "Predicting Imbalanced Travel Insurance Claim Status using Machine Learning Techniques"
+author: "Zahier Nasrudin"
+date: "January 30, 2019"
+output: 
+    html_document:
+        toc: yes
+        theme: cosmo
+        highlight: tango
+        code_folding: hide
+        fig_width: 12
+        fig_height: 8
+---
+
+## 1. Introduction
+
+
+
+In this project, we are dealing with imbalanced travel insurance claim status. There are many ways to deal with class imbalance such as sampling and ensemble techniques. However, I will only focus on the sampling techniques (Oversampling and undersampling) for this project. 
+
+
+Here is what I'm going to do. I will first build the Machine Learning models without the sampling techniques. The models will then be compared with the undersampling technique and oversampling technique. 
+
+So the definitions:
+
+* **Undersampling**: [Only the subset of majority instances is included to balance the distribution between classes.](https://medium.com/@zahiernasrudin/predicting-imbalance-travel-insurance-claim-status-using-machine-learning-techniques-d4f6ec922f8a)
+* **Oversampling**: [ Replicating the minority instances to balance the distribution between classes.](https://www.analyticsvidhya.com/blog/2016/03/practical-guide-deal-imbalanced-classification-problems/) 
+
+Here are the attributes:
+
+* Target: Claim Status (Claim.Status)
+* Name of agency (Agency)
+* Type of travel insurance agencies (Agency.Type)
+* Distribution channel of travel insurance agencies (Distribution.Channel)
+* Name of the travel insurance products (Product.Name)
+* Duration of travel (Duration)
+* Destination of travel (Destination)
+* Amount of sales of travel insurance policies (Net.Sales)
+* Commission received for travel insurance agency (Commission)
+* Gender of insured (Gender)
+* Age of insured (Age)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+```
+
+---
+
+
+
+## 2. Data Importing & Cleaning & Inspecting
+### 2-1) Import dataset
+Travel Insurance Dataset
+```{r}
+travel_insurance <- read.csv("/Users/zahiernasrudin/Desktop/zahier & danial/travel insurance.csv", header = T)
+```
+
+### 2-2) Dataset inspection {.tabset}
+#### structure
+```{r}
+str(travel_insurance)
+```
+Looking at the summary of the dataset, there are several things to be dealt with:
+
+* **Column of duration** where it contains '-2'
+* **Column of gender** : Too many blank values
+* **Column of age**: Max age of 118. [Current oldest living person is 114-year old](https://en.wikipedia.org/wiki/Oldest_people)
+* **Column of Destination**: Too many levels
+
+
+#### summary
+```{r}
+summary(travel_insurance)
+```
+
+#### head
+```{r}
+knitr::kable(head(travel_insurance))
+```
+
+### 2-3) Remove unnecessary instances in duration column {.tabset}
+#### Check duration
+```{r}
+library(dplyr)
+library(ggplot2)
+
+#duration and age
+knitr::kable(travel_insurance %>%
+filter(grepl("-",Duration)))
+```
+
+#### Remove instances
+Click code
+```{r}
+#remove the instance (duration and age)
+travel_insurance1 <- travel_insurance%>%
+filter(!grepl("-",Duration) & !grepl("118",Age))
+```
+
+#### Check again
+```{r}
+#check if the instances have been removed
+travel_insurance1%>%
+filter(grepl("-",Duration)| Age == "118")
+
+```
+
+Upon checking, negative values in the duration column have also the value of 118 in the age column, we therefore remove the instances. 
+
+### 2-4) Remove gender column {.tabset}
+#### Check gender column
+```{r}
+#check the blank values in gender column
+travel_insurance1%>%
+select(Gender)%>%
+group_by(Gender)%>%
+summarise(total=n())%>%
+mutate(percentage= round((total/sum(total)*100),3))%>%
+ggplot(aes(x=Gender,y=percentage, fill=Gender))+
+geom_bar(stat="identity")+
+geom_text(aes(label=percentage))
+```
+
+#### Remove the gender column
+Click code
+```{r}
+#remove the gender column
+travel_insurance2 <- travel_insurance1%>%
+select(-Gender)
+```
+
+### 2-5) Check if there are any more missing values
+```{r}
+#remove the gender column
+anyNA(travel_insurance2)
+```
+
+
+### 2-6) Skewness {.tabset}
+#### Check skew
+```{r}
+library(fBasics)
+knitr::kable(colSkewness(travel_insurance2[,sapply(travel_insurance2, is.numeric)]))
+```
+
+We would consider transforming the variables for variables that are skewed to the right: Duration, Net Sales and Comission to stabilize the variance and to counter non-normality. Cube root transformation will be applied here as there are 0 values in our dataset.
+
+#### Transform
+```{r}
+cube_travel<-sign(travel_insurance2[,c(6,8,9)]) * abs(travel_insurance2[,c(6,8,9)])^(1/3)
+```
+
+#### Check again
+```{r}
+colSkewness(cube_travel)
+travel_insurance_new<-cbind(travel_insurance2[,-c(6,8,9)],cube_travel) #combine the new transformed columns
+```
+
+### 2-7) Destination column {.tabset}
+#### Check the levels
+```{r}
+#Visual
+travel_insurance_new%>%
+group_by(Destination)%>%
+summarise(total=n())%>%
+ggplot(aes(x=Destination,y=total))+
+geom_bar(stat="identity")
+
+#table
+
+library(DT)
+knitr::kable(travel_insurance_new%>%
+group_by(Destination)%>%
+summarise(total=n())%>%
+arrange(desc(total)))
+```
+
+#### Create a column of frequency in the dataset
+```{r}
+travel_insurance_new<- travel_insurance_new %>%
+mutate(total_destination= ave(seq(nrow(travel_insurance_new)), Destination, FUN=length))
+knitr::kable(head(travel_insurance_new))
+```
+
+#### Recategorize levels
+```{r}
+breaking_point <- c(seq(0,6000, by=1000),14000)
+travel_insurance_new<- travel_insurance_new %>%
+mutate(bin= cut(total_destination, breaking_point)) 
+travel_insurance_final <- travel_insurance_new[,-c(6,11)] #remove old destination and frequency columns
+knitr::kable(head(travel_insurance_final))
+```
+### 2-8) Check the imbalanced claim status
+```{r}
+
+travel_insurance %>%
+select(Claim) %>%
+group_by(Claim)%>%
+summarise(total=n())%>%
+mutate(percentage= round(((total/sum(total))*100),3))%>%
+ggplot(aes(x=Claim, y= percentage, fill= Claim))+
+geom_bar(stat="identity")+
+geom_text(aes(label=percentage))
+```
+Based on the figure above, it can be seen that the claim status of no has a percentage value 98.536% while the claim status of yes is only at 1.464%
+
+
+---
+
+
+
+
+## 3. Model development (Without sampling technique)
+### 3-1) Splitting data
+We will split the dataset into training sample and testing sample
+```{r}
+library(caret)
+set.seed(1000)
+portion= createDataPartition(travel_insurance_final$Claim,p=0.7, list=FALSE)
+train_travel= travel_insurance_final[portion,]
+test_travel= travel_insurance_final[-portion,]
+
+knitr::kable(table(train_travel$Claim),col.names = c("claim","frequency"))
+knitr::kable(table(test_travel$Claim),col.names = c("claim","frequency"))
+```
+
+### 3-2) Cross validation
+We will be performing cross validation
+```{r}
+cvfolds= createMultiFolds(train_travel$Claim,k=5)
+cv.ctrl=trainControl(method = "repeatedcv",number = 5, repeats = 3,
+                     index = cvfolds)
+```
+
+
+### 3-3) Building Logistic Regression, Rpart and Neural Network  {.tabset}
+```{r}
+library(caret)
+```
+
+#### Logistic Regression
+```{r}
+logistic.cv = train(Claim ~., data= train_travel, method="glm",
+                 trControl=cv.ctrl, tuneLength=2, family=binomial())
+
+test_pred_logistic=predict(logistic.cv,newdata = test_travel)
+cm_logistic= confusionMatrix(test_pred_logistic, test_travel$Claim)
+cm_logistic
+```
+
+#### Rpart
+```{r}
+rpart.cv = train(Claim ~., data= train_travel, method="rpart",
+                 trControl=cv.ctrl, tuneLength=2)
+
+test_pred=predict(rpart.cv,newdata = test_travel)
+cm_rpart= confusionMatrix(test_pred, test_travel$Claim)
+cm_rpart
+```
+
+#### Neural Network
+```{r}
+neuralnetwork.cv = train(Claim ~., data= train_travel, method="nnet",
+                 trControl=cv.ctrl, tuneLength=2)
+
+test_pred_neuralnetwork=predict(neuralnetwork.cv,newdata = test_travel)
+cm_neuralnetwork= confusionMatrix(test_pred_neuralnetwork, test_travel$Claim)
+cm_neuralnetwork
+```
+
+---
+
+
+
+
+## 4. Model development (Undersampling)
+### 4-1) Undersampling
+```{r}
+library(ROSE)
+travel_undersampling <- ovun.sample(Claim~. , data= travel_insurance_final, method = "under", 
+                                    p=0.5, seed = 1000)$data
+knitr::kable(table(travel_undersampling$Claim),col.names = c("claim","frequency"))
+```
+### 4-2) Splitting data
+We will split the dataset into training sample and testing sample
+```{r}
+set.seed(1000)
+portion2= createDataPartition(travel_undersampling$Claim,p=0.7, list=FALSE)
+train_travel_undersampling= travel_undersampling[portion2,]
+test_travel_undersampling= travel_undersampling[-portion2,]
+
+knitr::kable(table(train_travel_undersampling$Claim),col.names = c("claim","frequency"))
+knitr::kable(table(test_travel_undersampling$Claim),col.names = c("claim","frequency"))
+```
+### 4-3) Cross validation
+We will be performing cross validation
+```{r}
+cvfolds2= createMultiFolds(train_travel_undersampling$Claim,k=5)
+cv.ctrl2=trainControl(method = "repeatedcv",number = 5, repeats = 3,
+                     index = cvfolds2)
+```
+
+
+### 4-4) Building Logistic Regression, Rpart and Neural Network (Undersampling) {.tabset}
+#### Logistic Regression
+```{r}
+logistic.cv2 = train(Claim ~., data= train_travel_undersampling, method="glm",
+                 trControl=cv.ctrl2, tuneLength=2, family=binomial())
+
+test_pred_logistic2=predict(logistic.cv2,newdata = test_travel_undersampling)
+cm_logistic2= confusionMatrix(test_pred_logistic2, test_travel_undersampling$Claim)
+cm_logistic2
+```
+#### Rpart
+```{r}
+rpart.cv2 = train(Claim ~., data= train_travel_undersampling, method="rpart",
+                 trControl=cv.ctrl2, tuneLength=2)
+
+test_pred2=predict(rpart.cv2,newdata = test_travel_undersampling)
+cm_rpart2= confusionMatrix(test_pred2, test_travel_undersampling$Claim)
+cm_rpart2
+```
+#### Neural Network
+```{r}
+neuralnetwork.cv2 = train(Claim ~., data= train_travel_undersampling, method="nnet",
+                 trControl=cv.ctrl2, tuneLength=2)
+
+test_pred_neuralnetwork2=predict(neuralnetwork.cv2,newdata = test_travel_undersampling)
+cm_neuralnetwork2= confusionMatrix(test_pred_neuralnetwork2, test_travel_undersampling$Claim)
+cm_neuralnetwork2
+```
+
+
+---
+
+
+
+
+## 5. Model development (Oversampling)
+### 5-1) Oversampling
+```{r}
+library(ROSE)
+travel_oversampling <- ovun.sample(Claim~. , data= travel_insurance_final, method = "over", 
+                                    p=0.5, seed = 1000)$data
+knitr::kable(table(travel_oversampling$Claim),col.names = c("claim","frequency"))
+```
+### 5-2) Splitting data
+We will split the dataset into training sample and testing sample
+```{r}
+set.seed(1000)
+portion3= createDataPartition(travel_oversampling$Claim,p=0.7, list=FALSE)
+train_travel_oversampling= travel_oversampling[portion3,]
+test_travel_oversampling= travel_oversampling[-portion3,]
+
+knitr::kable(table(train_travel_oversampling$Claim),col.names = c("claim","frequency"))
+knitr::kable(table(test_travel_oversampling$Claim),col.names = c("claim","frequency"))
+```
+### 5-3) Cross validation
+We will be performing cross validation
+```{r}
+cvfolds3= createMultiFolds(train_travel_oversampling$Claim,k=5)
+cv.ctrl3=trainControl(method = "repeatedcv",number = 5, repeats = 3,
+                     index = cvfolds3)
+```
+
+
+### 5-4) Building Logistic Regression, Rpart and Neural Network (Oversampling) {.tabset}
+#### Logistic Regression
+```{r}
+logistic.cv3 = train(Claim ~., data= train_travel_oversampling, method="glm",
+                 trControl=cv.ctrl3, tuneLength=2, family=binomial())
+
+test_pred_logistic3=predict(logistic.cv3,newdata = test_travel_oversampling)
+cm_logistic3= confusionMatrix(test_pred_logistic3, test_travel_oversampling$Claim)
+cm_logistic3
+```
+#### Rpart
+```{r}
+rpart.cv3 = train(Claim ~., data= train_travel_oversampling, method="rpart",
+                 trControl=cv.ctrl3, tuneLength=2)
+
+test_pred3=predict(rpart.cv3,newdata = test_travel_oversampling)
+cm_rpart3= confusionMatrix(test_pred3, test_travel_oversampling$Claim)
+cm_rpart3
+```
+#### Neural Network
+```{r}
+neuralnetwork.cv3 = train(Claim ~., data= train_travel_oversampling, method="nnet",
+                 trControl=cv.ctrl3, tuneLength=2)
+
+test_pred_neuralnetwork3=predict(neuralnetwork.cv3,newdata = test_travel_oversampling)
+cm_neuralnetwork3= confusionMatrix(test_pred_neuralnetwork3, test_travel_oversampling$Claim)
+cm_neuralnetwork3
+```
+
+
+---
+
+
+
+
+## 6. Compare performance
+We will be comparing the models.
+
+### 6-1) Performance measures {.tabset}
+#### Accuracy
+```{r}
+accuracy= data.frame(technique= c(rep("no sampling", 3), rep("under sampling", 3),rep("over sampling", 3)),
+                     algorithm= c("RPART","LOGISTIC","NEURAL NETWORK"),
+                     score= c(round(c(cm_rpart$overall[1]*100,cm_logistic$overall[1]*100,cm_neuralnetwork$overall[1]*100),2),
+                     round(c(cm_rpart2$overall[1]*100,cm_logistic2$overall[1]*100,cm_neuralnetwork2$overall[1]*100),2),
+                     round(c(cm_rpart3$overall[1]*100,cm_logistic3$overall[1]*100,cm_neuralnetwork3$overall[1]*100),2)))
+
+ggplot(data=accuracy, aes(x=technique, y=score, fill=algorithm)) +
+  geom_bar(stat="identity",position=position_dodge())+
+  labs(y="Accuracy")+
+  theme(axis.text.x = element_text(angle = 90))+
+  geom_text(aes(label=score), position=position_dodge(width=0.9), vjust=-0.25)
+```
+#### Sensitivity
+```{r}
+sensitivity= data.frame(technique= c(rep("no sampling", 3), rep("under sampling", 3),rep("over sampling", 3)),
+                     algorithm= c("RPART","LOGISTIC","NEURAL NETWORK"),
+                     score= c(round(c(cm_rpart$byClass[1]*100,cm_logistic$byClass[1]*100,cm_neuralnetwork$byClass[1]*100),2),
+                     round(c(cm_rpart2$byClass[1]*100,cm_logistic2$byClass[1]*100,cm_neuralnetwork2$byClass[1]*100),2),
+                     round(c(cm_rpart3$byClass[1]*100,cm_logistic3$byClass[1]*100,cm_neuralnetwork3$byClass[1]*100),2)))
+
+ggplot(data=sensitivity, aes(x=technique, y=score, fill=algorithm)) +
+  geom_bar(stat="identity",position=position_dodge())+
+  labs(y="Sensitivity")+
+  theme(axis.text.x = element_text(angle = 90))+
+  geom_text(aes(label=score), position=position_dodge(width=0.9), vjust=-0.25)
+```
+#### Specificity
+```{r}
+sensitivity= data.frame(technique= c(rep("no sampling", 3), rep("under sampling", 3),rep("over sampling", 3)),
+                     algorithm= c("RPART","LOGISTIC","NEURAL NETWORK"),
+                     score= c(round(c(cm_rpart$byClass[2]*100,cm_logistic$byClass[2]*100,cm_neuralnetwork$byClass[2]*100),2),
+                     round(c(cm_rpart2$byClass[2]*100,cm_logistic2$byClass[2]*100,cm_neuralnetwork2$byClass[2]*100),2),
+                     round(c(cm_rpart3$byClass[2]*100,cm_logistic3$byClass[2]*100,cm_neuralnetwork3$byClass[2]*100),2)))
+
+ggplot(data=sensitivity, aes(x=technique, y=score, fill=algorithm)) +
+  geom_bar(stat="identity",position=position_dodge())+
+  labs(y="Specificity")+
+  theme(axis.text.x = element_text(angle = 90))+
+  geom_text(aes(label=score), position=position_dodge(width=0.9), vjust=-0.25)
+```
+
+
+

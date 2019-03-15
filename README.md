@@ -1,1 +1,3 @@
-# Travel-Insurance-Claim-Status
+# Travel Insurance Claim Status
+
+Predicting Imbalanced Travel Insurance Claim Status

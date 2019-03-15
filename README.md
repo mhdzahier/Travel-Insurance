@@ -1,3 +1,3 @@
-# Travel Insurance Claim Status
+# Predicting Imbalanced Travel Insurance Claim Status Using Machine Learning Algorithms
 
-Predicting Imbalanced Travel Insurance Claim Status
+
